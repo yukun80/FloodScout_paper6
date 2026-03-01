@@ -1,0 +1,4 @@
+# Put your Weibo cookie string in one line, then copy to:
+# data/input/weibo_cookie.txt
+# Example:
+# SUB=_2A25...; SUBP=0033WrSXqPxfM725Ws9jqgMF55529P9D9W...;

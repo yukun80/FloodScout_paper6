@@ -45,5 +45,11 @@ logs/
 tmp/
 .temp/
 
+# FloodScout runtime artifacts
+data/output/*.jsonl
+data/output/*.csv
+data/state/*.db
+data/input/weibo_cookie.txt
+
 *.zip
 .codex/
