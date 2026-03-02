@@ -60,8 +60,36 @@ class CrawlerConfig:
 
 
 @dataclass(slots=True)
+class Crawl4AIConfig:
+    enabled: bool = True
+    headless: bool = True
+    max_concurrency: int = 3
+    wait_for_selector: str = ".card-wrap"
+    page_timeout_ms: int = 30000
+    max_scroll_times: int = 4
+
+
+@dataclass(slots=True)
+class GeoConfig:
+    provider: str = "gaode"
+    enabled: bool = False
+    gaode_key_env_name: str = "GAODE_API_KEY"
+    request_timeout: float = 8.0
+    cache_db_name: str = "geocode_cache.db"
+
+
+@dataclass(slots=True)
+class SourceWeightConfig:
+    api: float = 1.0
+    browser: float = 1.05
+
+
+@dataclass(slots=True)
 class AppConfig:
     paths: ProjectPaths = field(default_factory=ProjectPaths)
     keywords: KeywordConfig = field(default_factory=KeywordConfig)
     batch: BatchConfig = field(default_factory=BatchConfig)
     crawler: CrawlerConfig = field(default_factory=CrawlerConfig)
+    crawl4ai: Crawl4AIConfig = field(default_factory=Crawl4AIConfig)
+    geo: GeoConfig = field(default_factory=GeoConfig)
+    source_weights: SourceWeightConfig = field(default_factory=SourceWeightConfig)

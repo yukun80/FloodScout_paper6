@@ -7,11 +7,13 @@ from floodscout.pipeline.cleaning import normalize_posts
 from floodscout.pipeline.dedup import deduplicate_posts
 from floodscout.pipeline.extract import extract_facts
 from floodscout.pipeline.fuse import aggregate_events
+from floodscout.pipeline.geocode import GeoCoder, geocode_facts
 
 
 class PipelineRunner:
-    def __init__(self, crawler: WeiboCrawler) -> None:
+    def __init__(self, crawler: WeiboCrawler, geocoder: GeoCoder | None = None) -> None:
         self.crawler = crawler
+        self.geocoder = geocoder
 
     def run_task(
         self, task: CrawlTask
@@ -21,5 +23,6 @@ class PipelineRunner:
         deduped = deduplicate_posts(normalized)
         classified = classify_posts(deduped)
         facts = extract_facts(classified)
+        facts = geocode_facts(facts, geocoder=self.geocoder)
         events = aggregate_events(facts)
         return deduped, facts, events

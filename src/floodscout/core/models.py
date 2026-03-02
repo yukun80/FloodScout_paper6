@@ -12,12 +12,23 @@ class TaskStatus(StrEnum):
     FAILED = "failed"
 
 
+class TaskSourceType(StrEnum):
+    KEYWORD_API = "keyword_api"
+    TOPIC_BROWSER = "topic_browser"
+    DETAIL_BROWSER = "detail_browser"
+
+
 class CrawlTask(BaseModel):
     task_id: str
     city: str
     keyword: str
     start_date: str
     end_date: str
+    source_type: TaskSourceType = TaskSourceType.KEYWORD_API
+    entry_url: str | None = None
+    cursor: str | None = None
+    topic: str | None = None
+    priority: int = 100
     status: TaskStatus = TaskStatus.PENDING
     retries: int = 0
 
@@ -37,6 +48,11 @@ class RawPost(BaseModel):
     source_url: str | None = None
     search_keyword: str
     city_hint: str
+    crawl_source: str = "api"
+    text_markdown: str | None = None
+    raw_html_path: str | None = None
+    topic: str | None = None
+    source_entry_url: str | None = None
 
 
 class NormalizedPost(BaseModel):
@@ -67,14 +83,27 @@ class ExtractedFact(BaseModel):
     confidence: float
     label: str
     event_time: datetime
+    location_text: str | None = None
+    geo_confidence: float = 0.0
+    lng: float | None = None
+    lat: float | None = None
+    gcj_lng: float | None = None
+    gcj_lat: float | None = None
 
 
 class AggregatedEvent(BaseModel):
     event_id: str
     city: str
     date: str
+    start_time: str
+    end_time: str
+    grid_id: str
+    center_lng: float | None = None
+    center_lat: float | None = None
     event_type: str
     evidence_count: int
+    help_request_count: int
     median_water_depth_cm: int | None
     event_confidence: float
     post_ids: list[str]
+    top_evidence_posts: list[str] = Field(default_factory=list)

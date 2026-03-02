@@ -42,3 +42,9 @@ class MockWeiboCrawler:
                 )
             )
         return posts
+
+    def supports(self, source_type: str) -> bool:
+        return source_type in {"keyword_api", "topic_browser", "detail_browser"}
+
+    def healthcheck(self) -> tuple[bool, str]:
+        return True, "mock crawler ready"

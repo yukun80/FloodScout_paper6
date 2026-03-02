@@ -7,6 +7,16 @@ from pathlib import Path
 from floodscout.core.models import CrawlTask, TaskStatus
 
 
+_SCHEMA_COLUMNS: dict[str, str] = {
+    "source_type": "TEXT NOT NULL DEFAULT 'keyword_api'",
+    "entry_url": "TEXT",
+    "cursor": "TEXT",
+    "topic": "TEXT",
+    "priority": "INTEGER NOT NULL DEFAULT 100",
+    "last_cursor": "TEXT",
+}
+
+
 class TaskStateStore:
     def __init__(self, db_path: Path, max_retries: int = 2) -> None:
         self.db_path = db_path
@@ -28,26 +38,50 @@ class TaskStateStore:
                     keyword TEXT NOT NULL,
                     start_date TEXT NOT NULL,
                     end_date TEXT NOT NULL,
+                    source_type TEXT NOT NULL DEFAULT 'keyword_api',
+                    entry_url TEXT,
+                    cursor TEXT,
+                    topic TEXT,
+                    priority INTEGER NOT NULL DEFAULT 100,
                     status TEXT NOT NULL,
                     retries INTEGER NOT NULL DEFAULT 0,
                     last_error TEXT,
+                    last_cursor TEXT,
                     updated_at TEXT NOT NULL
                 )
                 """
             )
+            self._ensure_columns(conn)
+
+    def _ensure_columns(self, conn: sqlite3.Connection) -> None:
+        rows = conn.execute("PRAGMA table_info(tasks)").fetchall()
+        existing = {str(r["name"]) for r in rows}
+        for name, ddl in _SCHEMA_COLUMNS.items():
+            if name in existing:
+                continue
+            conn.execute(f"ALTER TABLE tasks ADD COLUMN {name} {ddl}")
 
     def upsert_tasks(self, tasks: list[CrawlTask]) -> int:
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.executemany(
                 """
-                INSERT INTO tasks(task_id, city, keyword, start_date, end_date, status, retries, updated_at)
-                VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO tasks(
+                    task_id, city, keyword, start_date, end_date,
+                    source_type, entry_url, cursor, topic, priority,
+                    status, retries, updated_at
+                )
+                VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(task_id) DO UPDATE SET
                     city=excluded.city,
                     keyword=excluded.keyword,
                     start_date=excluded.start_date,
                     end_date=excluded.end_date,
+                    source_type=excluded.source_type,
+                    entry_url=excluded.entry_url,
+                    cursor=excluded.cursor,
+                    topic=excluded.topic,
+                    priority=excluded.priority,
                     updated_at=excluded.updated_at
                 """,
                 [
@@ -57,6 +91,11 @@ class TaskStateStore:
                         t.keyword,
                         t.start_date,
                         t.end_date,
+                        t.source_type,
+                        t.entry_url,
+                        t.cursor,
+                        t.topic,
+                        t.priority,
                         t.status,
                         t.retries,
                         now,
@@ -72,7 +111,7 @@ class TaskStateStore:
                 """
                 SELECT * FROM tasks
                 WHERE status IN (?, ?) AND retries <= ?
-                ORDER BY updated_at ASC
+                ORDER BY priority DESC, updated_at ASC
                 LIMIT ?
                 """,
                 (TaskStatus.PENDING, TaskStatus.FAILED, self.max_retries - 1, limit),
@@ -84,6 +123,11 @@ class TaskStateStore:
                 keyword=r["keyword"],
                 start_date=r["start_date"],
                 end_date=r["end_date"],
+                source_type=r["source_type"],
+                entry_url=r["entry_url"],
+                cursor=r["cursor"],
+                topic=r["topic"],
+                priority=r["priority"],
                 status=r["status"],
                 retries=r["retries"],
             )
@@ -106,6 +150,18 @@ class TaskStateStore:
                 WHERE task_id=?
                 """,
                 (TaskStatus.FAILED, error[:500], now, task_id),
+            )
+
+    def update_cursor(self, task_id: str, cursor: str) -> None:
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE tasks
+                SET last_cursor=?, updated_at=?
+                WHERE task_id=?
+                """,
+                (cursor, now, task_id),
             )
 
     def summary(self) -> dict[str, int]:

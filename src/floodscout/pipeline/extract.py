@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from floodscout.core.models import ClassifiedPost, ExtractedFact
+from floodscout.pipeline.geocode import extract_location_candidates
 
 _DEPTH_RE = re.compile(r"(\d{1,3})\s*(?:cm|厘米)")
 _ROAD_BLOCKED_TERMS = ("无法通行", "封路", "中断")
@@ -23,6 +24,7 @@ def extract_facts(items: list[ClassifiedPost]) -> list[ExtractedFact]:
             continue
 
         text = item.post.text_clean
+        locations = extract_location_candidates(text)
         facts.append(
             ExtractedFact(
                 post_id=item.post.post_id,
@@ -34,6 +36,7 @@ def extract_facts(items: list[ClassifiedPost]) -> list[ExtractedFact]:
                 confidence=item.score,
                 label=item.label,
                 event_time=item.post.publish_time,
+                location_text=locations[0] if locations else None,
             )
         )
     return facts

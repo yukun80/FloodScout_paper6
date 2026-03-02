@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote_plus, urlencode
 from urllib.request import Request, urlopen
 
 from dateutil import parser as dt_parser
@@ -62,6 +62,16 @@ class RealWeiboCrawler:
             nick = str(data.get("nick") or "")
             return True, f"login=true nick={nick or 'unknown'}"
         return False, "login=false (cookie may be expired or invalid)"
+
+    def supports(self, source_type: str) -> bool:
+        return source_type == "keyword_api"
+
+    def healthcheck(self) -> tuple[bool, str]:
+        try:
+            ok, msg = self.validate_cookie()
+            return ok, msg
+        except Exception as exc:  # noqa: BLE001
+            return False, str(exc)
 
     def fetch(self, task: CrawlTask) -> list[RawPost]:
         start = date.fromisoformat(task.start_date)
@@ -155,7 +165,11 @@ class RealWeiboCrawler:
             "Referer": "https://m.weibo.cn/",
         }
         if keyword:
-            headers["Referer"] = f"https://m.weibo.cn/search?containerid=100103type=1&q={keyword}"
+            encoded = quote_plus(keyword)
+            headers["Referer"] = (
+                "https://m.weibo.cn/search?containerid=100103type=1%26q%3D"
+                f"{encoded}"
+            )
         if self.config.cookie:
             headers["Cookie"] = self.config.cookie
         return headers
@@ -194,6 +208,9 @@ class RealWeiboCrawler:
             source_url=f"https://m.weibo.cn/detail/{post_id}",
             search_keyword=task.keyword,
             city_hint=task.city,
+            crawl_source="api",
+            topic=task.topic,
+            source_entry_url=task.entry_url,
         )
 
 

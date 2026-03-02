@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -56,6 +56,10 @@ def _build_query(params: dict[str, list[str]]) -> EventQuery:
 
     start = _single(params, "start_date")
     end = _single(params, "end_date")
+    start_time = _single(params, "start_time")
+    end_time = _single(params, "end_time")
+    grid_id = _single(params, "grid_id")
+    bbox = _single(params, "bbox")
     min_conf = _single(params, "min_confidence")
     limit = _single(params, "limit")
 
@@ -64,6 +68,10 @@ def _build_query(params: dict[str, list[str]]) -> EventQuery:
         event_type=event_type,
         start_date=date.fromisoformat(start) if start else None,
         end_date=date.fromisoformat(end) if end else None,
+        start_time=datetime.fromisoformat(start_time) if start_time else None,
+        end_time=datetime.fromisoformat(end_time) if end_time else None,
+        grid_id=grid_id,
+        bbox=_parse_bbox(bbox) if bbox else None,
         min_confidence=float(min_conf) if min_conf else 0.0,
         limit=max(1, min(int(limit), 2000)) if limit else 200,
     )
@@ -74,3 +82,13 @@ def _single(params: dict[str, list[str]], key: str) -> str | None:
     if not values:
         return None
     return values[0].strip() or None
+
+
+def _parse_bbox(value: str) -> tuple[float, float, float, float]:
+    parts = [p.strip() for p in value.split(",")]
+    if len(parts) != 4:
+        raise ValueError("bbox must be 'min_lng,min_lat,max_lng,max_lat'")
+    min_lng, min_lat, max_lng, max_lat = (float(p) for p in parts)
+    if min_lng > max_lng or min_lat > max_lat:
+        raise ValueError("bbox min must be <= max")
+    return min_lng, min_lat, max_lng, max_lat

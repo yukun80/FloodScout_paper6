@@ -13,9 +13,18 @@ from floodscout.analysis import (
 )
 from floodscout.config.settings import AppConfig
 from floodscout.core.task_planner import TaskPlanner
-from floodscout.crawler import MockWeiboCrawler, RealWeiboCrawler, RealWeiboCrawlerConfig
+from floodscout.crawler import (
+    Crawl4AIWeiboCrawler,
+    Crawl4AIWeiboCrawlerConfig,
+    CrawlBackendRouter,
+    MockWeiboCrawler,
+    RealWeiboCrawler,
+    RealWeiboCrawlerConfig,
+)
+from floodscout.crawler.base import WeiboCrawler
+from floodscout.pipeline.geocode import GaodeGeocoder, GeocodeCache, GeoCoder
 from floodscout.pipeline.runner import PipelineRunner
-from floodscout.serving import run_event_api
+from floodscout.serving import export_events_geojson, run_event_api
 from floodscout.storage.output_store import JsonlOutputStore
 from floodscout.storage.state_store import TaskStateStore
 from floodscout.utils import load_nonempty_lines
@@ -123,6 +132,18 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8000)
 
+    export_geojson = sub.add_parser("export-geojson", help="Export events as GeoJSON")
+    export_geojson.add_argument(
+        "--events-file",
+        default=_default_output_file(config, config.batch.events_output_name),
+        help="Events JSONL file",
+    )
+    export_geojson.add_argument(
+        "--output-file",
+        default=_default_output_file(config, "events.geojson"),
+        help="GeoJSON output file",
+    )
+
     return parser
 
 
@@ -139,6 +160,12 @@ def _add_crawler_args(parser: argparse.ArgumentParser, config: AppConfig) -> Non
         choices=["weibo", "mock"],
         default="weibo",
         help="Crawler backend. Default is real weibo crawler.",
+    )
+    parser.add_argument(
+        "--crawler-mode",
+        choices=["api", "hybrid", "crawl4ai"],
+        default="hybrid",
+        help="Crawler routing mode when crawler=weibo.",
     )
     parser.add_argument(
         "--weibo-cookie-file",
@@ -184,6 +211,41 @@ def _add_crawler_args(parser: argparse.ArgumentParser, config: AppConfig) -> Non
         type=float,
         default=config.crawler.retry_backoff_seconds,
         help="Retry backoff base seconds for real crawler",
+    )
+    parser.add_argument(
+        "--crawl4ai-headless",
+        action="store_true",
+        default=config.crawl4ai.headless,
+        help="Run Crawl4AI in headless mode.",
+    )
+    parser.add_argument(
+        "--crawl4ai-timeout-ms",
+        type=int,
+        default=config.crawl4ai.page_timeout_ms,
+        help="Crawl4AI page timeout in milliseconds.",
+    )
+    parser.add_argument(
+        "--enable-geocode",
+        action="store_true",
+        default=config.geo.enabled,
+        help="Enable geocoding for extracted location text.",
+    )
+    parser.add_argument(
+        "--geocode-provider",
+        choices=["gaode"],
+        default=config.geo.provider,
+        help="Geocoding provider.",
+    )
+    parser.add_argument(
+        "--gaode-key-env",
+        default=config.geo.gaode_key_env_name,
+        help="Environment variable name for AMap/高德 API key.",
+    )
+    parser.add_argument(
+        "--geocode-timeout",
+        type=float,
+        default=config.geo.request_timeout,
+        help="Geocoding request timeout seconds.",
     )
 
 
@@ -234,7 +296,10 @@ def cmd_run_batch(args: argparse.Namespace, config: AppConfig) -> int:
     task_db = config.paths.state_dir / config.batch.task_db_name
     store = TaskStateStore(task_db, max_retries=config.batch.max_retries)
 
-    runner = PipelineRunner(crawler=_build_crawler(args, config))
+    runner = PipelineRunner(
+        crawler=_build_crawler(args, config),
+        geocoder=_build_geocoder(args, config),
+    )
     return _execute_pending_tasks(args=args, store=store, runner=runner, config=config)
 
 
@@ -244,7 +309,10 @@ def cmd_crawl_history(args: argparse.Namespace, config: AppConfig) -> int:
     task_db = config.paths.state_dir / config.batch.task_db_name
     store = TaskStateStore(task_db, max_retries=config.batch.max_retries)
 
-    runner = PipelineRunner(crawler=_build_crawler(args, config))
+    runner = PipelineRunner(
+        crawler=_build_crawler(args, config),
+        geocoder=_build_geocoder(args, config),
+    )
     return _execute_pending_tasks(args=args, store=store, runner=runner, config=config)
 
 
@@ -282,7 +350,7 @@ def _execute_pending_tasks(
     return 0
 
 
-def _build_crawler(args: argparse.Namespace, config: AppConfig) -> MockWeiboCrawler | RealWeiboCrawler:
+def _build_crawler(args: argparse.Namespace, config: AppConfig) -> WeiboCrawler:
     if args.crawler == "mock":
         return MockWeiboCrawler()
 
@@ -299,15 +367,39 @@ def _build_crawler(args: argparse.Namespace, config: AppConfig) -> MockWeiboCraw
         retry_backoff_seconds=args.retry_backoff_seconds,
         cookie=cookie,
     )
-    crawler = RealWeiboCrawler(config=cfg)
+    api_crawler = RealWeiboCrawler(config=cfg)
+    browser_crawler = Crawl4AIWeiboCrawler(
+        config=Crawl4AIWeiboCrawlerConfig(
+            cookie=cookie,
+            headless=args.crawl4ai_headless,
+            page_timeout_ms=args.crawl4ai_timeout_ms,
+        )
+    )
+    mode = args.crawler_mode
 
-    if not args.skip_cookie_check:
-        ok, msg = crawler.validate_cookie()
+    if mode in {"api", "hybrid"} and not args.skip_cookie_check:
+        ok, msg = api_crawler.validate_cookie()
         if not ok:
             raise ValueError(f"Weibo cookie invalid: {msg}")
         print(f"Cookie check passed: {msg}")
 
-    return crawler
+    if mode == "api":
+        return api_crawler
+    if mode == "crawl4ai":
+        return browser_crawler
+    return CrawlBackendRouter(api_crawler=api_crawler, browser_crawler=browser_crawler, mode=mode)
+
+
+def _build_geocoder(args: argparse.Namespace, config: AppConfig) -> GeoCoder | None:
+    if not args.enable_geocode:
+        return None
+    if args.geocode_provider != "gaode":
+        raise ValueError(f"Unsupported geocode provider: {args.geocode_provider}")
+    api_key = os.getenv(args.gaode_key_env, "").strip()
+    if not api_key:
+        raise ValueError(f"Geocode enabled but API key missing. Set env {args.gaode_key_env}.")
+    cache = GeocodeCache(config.paths.state_dir / config.geo.cache_db_name)
+    return GaodeGeocoder(api_key=api_key, timeout_seconds=args.geocode_timeout, cache=cache)
 
 
 def _resolve_cookie(cookie_file: str, cookie_env: str, required: bool) -> str | None:
@@ -387,6 +479,15 @@ def cmd_serve_events(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export_geojson(args: argparse.Namespace) -> int:
+    count = export_events_geojson(
+        events_file=Path(args.events_file),
+        output_file=Path(args.output_file),
+    )
+    print(f"Wrote GeoJSON features: {count} -> {args.output_file}")
+    return 0
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
@@ -407,6 +508,8 @@ def main() -> int:
             return cmd_sample_review(args)
         if args.command == "serve-events":
             return cmd_serve_events(args)
+        if args.command == "export-geojson":
+            return cmd_export_geojson(args)
     except ValueError as exc:
         parser.error(str(exc))
         return 2

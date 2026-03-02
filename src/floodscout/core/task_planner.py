@@ -5,7 +5,7 @@ from datetime import date
 from calendar import monthrange
 
 from floodscout.core.keywords import build_keyword_queries
-from floodscout.core.models import CrawlTask
+from floodscout.core.models import CrawlTask, TaskSourceType
 
 
 @dataclass(slots=True)
@@ -40,6 +40,8 @@ class TaskPlanner:
                             keyword=keyword,
                             start_date=s.start_date.isoformat(),
                             end_date=s.end_date.isoformat(),
+                            source_type=TaskSourceType.KEYWORD_API,
+                            priority=100,
                         )
                     )
         return tasks

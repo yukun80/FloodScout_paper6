@@ -10,12 +10,16 @@ def _fingerprint(text: str) -> str:
 
 
 def deduplicate_posts(posts: list[NormalizedPost]) -> list[NormalizedPost]:
-    seen: set[str] = set()
+    seen_text: set[str] = set()
+    seen_post_id: set[str] = set()
     deduped: list[NormalizedPost] = []
     for post in posts:
-        fp = _fingerprint(post.text_clean)
-        if fp in seen:
+        if post.post_id in seen_post_id:
             continue
-        seen.add(fp)
+        seen_post_id.add(post.post_id)
+        fp = _fingerprint(post.text_clean)
+        if fp in seen_text:
+            continue
+        seen_text.add(fp)
         deduped.append(post)
     return deduped

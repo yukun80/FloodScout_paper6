@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from floodscout.crawler.real_weibo import (
+    RealWeiboCrawler,
     _extract_mblogs,
     clean_weibo_html,
     extract_media_urls,
@@ -39,3 +40,13 @@ def test_extract_media_urls() -> None:
     }
     urls = extract_media_urls(mblog)
     assert len(urls) == 3
+
+
+def test_build_headers_keyword_referer_is_urlencoded_ascii() -> None:
+    crawler = RealWeiboCrawler()
+    headers = crawler._build_headers(keyword="宝鸡 内涝")
+    referer = headers["Referer"]
+    assert "宝鸡" not in referer
+    assert "q%3D" in referer
+    # "宝鸡 内涝" encoded by quote_plus: %E5%AE%9D%E9%B8%A1+%E5%86%85%E6%B6%9D
+    assert "%E5%AE%9D%E9%B8%A1" in referer
